@@ -7,7 +7,7 @@
 ### 20171128 1.0 Basic idea was created
 ### 20171215 1.1 Script reday for use
 ###
-### Needed libs: pymongo, graphyte, sys, math, argparse, logging, json
+### Needed libs: pymongo, graphyte, sys, math, argparse, logging
 ###
 ### pip install pymongo; pip install graphyte; pip install sys; pip install json; pip install math; pip install argparse; pip install logging
 ###
@@ -76,8 +76,8 @@ if commandLineArguments.logfile is None :
 else:
     gs_logfilepath = commandLineArguments.logfile
 
-#logging.basicConfig(format = u'%(levelname)-8s [%(asctime)s] %(message)s', level = logging.DEBUG, filename = gs_logfilepath) #, filemode="w" for logs overwriting
-logging.basicConfig(format = u'%(levelname)-8s [%(asctime)s] %(message)s', level = logging.DEBUG, filename = u'mongo_status.log') #, filemode="w" for logs overwriting
+logging.basicConfig(format = u'%(levelname)-8s [%(asctime)s] %(message)s', level = logging.DEBUG, filename = u'mongo_status.log', filemode="w")
+
 print_infomsg('Program has been started')
 
 if len(g_conffile) > 0 :
@@ -112,10 +112,6 @@ if len (graphyte_prefix) == 0 :
 print_infomsg ( u"Config loaded!")
 print_infomsg ( u"Logs for the "+graphyte_prefix)
 
-try:
-    graphyte.init(graphyte_host, prefix=graphyte_prefix, log_sends=True, interval=10) #graphyte settings (interval=10 set for batch sending)
-except Exception as err:
-    print_errmsg ("graphyte.init #01",err)
 
 try:
     g_mclient = MongoClient(mongo_host, mongo_port) #connection to MongoDB
@@ -126,28 +122,27 @@ except Exception as err:
 print_infomsg ("DB connected!")
 
 gas_dbs = g_mclient.database_names()
+interval_time = math.ceil((len(gas_dbs))/2)
 
-print_infomsg ("Collecting mongo metrics DB - START")
-
-db_dataSize_total = 0
-db_indexSize_total = 0
-db_storageSize_total = 0
+try:
+    graphyte.init(graphyte_host, prefix=graphyte_prefix, log_sends=True, interval=interval_time)
+except Exception as err:
+    print_errmsg ("graphyte.init #01",err)
 
 print_infomsg ("Collecting mongo TOP usage statistics")
 admin_dbstop = g_mclient.admin.command("top") # Top command returns usage statistics for each collection
+dump = json.dumps(admin_dbstop, indent=4)
+print_infomsg (u"TOP command output:"+dump)
+
+print_infomsg ("Collecting mongo metrics DB - START")
+
+print_infomsg ( u"Metrics will be sent to the "+graphyte_host)
 
 for gs_db in gas_dbs:
     print_infomsg ("        Process "+ str(gs_db))
-
-    dbstat = g_mclient[gs_db].command("dbstats")
-    db_dataSize_total = db_dataSize_total + (dbstat['dataSize']) #collecting total dataSize for all DBs
-    db_indexSize_total = db_indexSize_total + (dbstat['indexSize']) #collecting total indexSize for all DBs
-    db_storageSize_total = db_storageSize_total + (dbstat['storageSize']) #collecting total storageSize for all DBs
-
     collections = g_mclient[gs_db].collection_names()
 
     for gs_col in collections:
-
         print_infomsg ("            Process "+ str(gs_col))
 
         colstat = g_mclient[gs_db].command("collstats", gs_col)
@@ -158,33 +153,33 @@ for gs_db in gas_dbs:
         col_totalIndexSize = (colstat['totalIndexSize'])
 
         if not gb_test :
+            print_infomsg ("Send data to graphyte - START")
+            print_infomsg ("Collecting mongo collections size - START")
             graphyte.send("collections."+gs_db+"."+gs_col+'.col_size', col_size) #sending to graphyte collections size
+            print_infomsg ("Collecting mongo collections size - END")
+            print_infomsg ("Collecting mongo collections count - START")
             graphyte.send("collections."+gs_db+"."+gs_col+'.col_count', col_count) #sending to graphyte collections count
+            print_infomsg ("Collecting mongo collections count - END")
+            print_infomsg ("Collecting mongo collections storageSize - START")
             graphyte.send("collections."+gs_db+"."+gs_col+'.col_storageSize', col_storageSize) #sending to graphyte collections storageSize
+            print_infomsg ("Collecting mongo collections storageSize - END")
+            print_infomsg ("Collecting mongo collections totalIndexSize - START")
             graphyte.send("collections."+gs_db+"."+gs_col+'.col_totalIndexSize', col_totalIndexSize) #sending to graphyte collections totalIndexSize
-
-        print_infomsg ("Collecting mongo lock times - START")        
+            print_infomsg ("Collecting mongo collections totalIndexSize - END")
+            
+for col_time in admin_dbstop["totals"]:
+    print_infomsg ("Collecting mongo lock times - START") 
+    if "readLock" in admin_dbstop["totals"][col_time]:
+        read_total = admin_dbstop["totals"][col_time]["readLock"]["time"]
+        read = math.ceil(read_total/1000000)
+        graphyte.send("collections."+col_time+"."+'readLock', read) #sending to graphyte collections readLock time
+    if "writeLock" in admin_dbstop["totals"][col_time]:
+        write_total = admin_dbstop["totals"][col_time]["writeLock"]["time"]
+        write = math.ceil(write_total/1000000)
+        graphyte.send("collections."+col_time+"."+'writeLock', write) #sending to graphyte collections writeLock time
+    print_infomsg ("Collecting mongo lock times  - END")
         
-        for col_time in admin_dbstop["totals"]:
-            if "readLock" in admin_dbstop["totals"][col_time]:
-                read_total = admin_dbstop["totals"][col_time]["readLock"]["time"]
-                read = math.ceil(read_total/1000000)
-                graphyte.send("server."+gs_db+"."+gs_col+"."+'readLock', read) #sending to graphyte collections readLock time
-            if "writeLock" in admin_dbstop["totals"][col_time]:
-                write_total = admin_dbstop["totals"][col_time]["writeLock"]["time"]
-                write = math.ceil(write_total/1000000)
-                graphyte.send("server."+gs_db+"."+gs_col+"."+'writeLock', write) #sending to graphyte collections writeLock time
-
-        print_infomsg ("Collecting mongo lock times  - END")
 print_infomsg ("Collecting mongo metrics DB - END")
-
-print_infomsg ("Send data to graphyte - START")
-if not gb_test :
-    #graphyte.send("server."+'db_dataSize', db_dataSize_total) #sending to graphyte database dataSize
-    #graphyte.send("server."+'db_indexSize', db_indexSize_total) #sending to graphyte database indexSize
-    #graphyte.send("server."+'db_storageSize', db_storageSize_total) #sending to graphyte database storageSize
-    pass
-
 print_infomsg ("Send data to graphyte - END")
 
 g_mclient.close()
