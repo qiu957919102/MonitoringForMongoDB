@@ -122,17 +122,24 @@ except Exception as err:
 print_infomsg ("DB connected!")
 
 gas_dbs = g_mclient.database_names()
-interval_time = math.ceil((len(gas_dbs))/2)
+#interval_time = math.ceil((len(gas_dbs))/2)
+
 
 try:
-    graphyte.init(graphyte_host, prefix=graphyte_prefix, log_sends=True, interval=interval_time)
+    graphyte.init(graphyte_host, prefix=graphyte_prefix, log_sends=True) # Graphite settings initialization
 except Exception as err:
     print_errmsg ("graphyte.init #01",err)
 
+
 print_infomsg ("Collecting mongo TOP usage statistics")
-admin_dbstop = g_mclient.admin.command("top") # Top command returns usage statistics for each collection
-dump = json.dumps(admin_dbstop, indent=4)
+dbstop = g_mclient.admin.command("top") # Top command returns usage statistics for each collection
+dump = json.dumps(dbstop, indent=4)
 print_infomsg (u"TOP command output:"+dump)
+
+
+with open('mongo_top.json', 'w') as outfile: # Writing Top command output to the json file
+    json.dump(dbstop, outfile)
+outfile.close()
 
 print_infomsg ("Collecting mongo metrics DB - START")
 
@@ -166,16 +173,20 @@ for gs_db in gas_dbs:
             print_infomsg ("Collecting mongo collections totalIndexSize - START")
             graphyte.send("collections."+gs_db+"."+gs_col+'.col_totalIndexSize', col_totalIndexSize) #sending to graphyte collections totalIndexSize
             print_infomsg ("Collecting mongo collections totalIndexSize - END")
+
+
+with open('mongo_top.json', 'r') as data_file:    
+    admin_dbstop = json.load(data_file)
             
 for col_time in admin_dbstop["totals"]:
     print_infomsg ("Collecting mongo lock times - START") 
     if "readLock" in admin_dbstop["totals"][col_time]:
         read_total = admin_dbstop["totals"][col_time]["readLock"]["time"]
-        read = math.ceil(read_total/1000000)
+        read = read_total/1000000
         graphyte.send("collections."+col_time+"."+'readLock', read) #sending to graphyte collections readLock time
     if "writeLock" in admin_dbstop["totals"][col_time]:
         write_total = admin_dbstop["totals"][col_time]["writeLock"]["time"]
-        write = math.ceil(write_total/1000000)
+        write = write_total/1000000
         graphyte.send("collections."+col_time+"."+'writeLock', write) #sending to graphyte collections writeLock time
     print_infomsg ("Collecting mongo lock times  - END")
         
@@ -183,6 +194,7 @@ print_infomsg ("Collecting mongo metrics DB - END")
 print_infomsg ("Send data to graphyte - END")
 
 g_mclient.close()
+data_file.close() #closing the JSON file
 
 print_infomsg ("DB disconnected!")
 
