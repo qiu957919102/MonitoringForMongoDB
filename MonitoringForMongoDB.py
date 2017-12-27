@@ -122,24 +122,14 @@ except Exception as err:
 print_infomsg ("DB connected!")
 
 gas_dbs = g_mclient.database_names()
-#interval_time = math.ceil((len(gas_dbs))/2)
+interval_time = math.ceil((len(gas_dbs))/2)
 
 
 try:
-    graphyte.init(graphyte_host, prefix=graphyte_prefix, log_sends=True) # Graphite settings initialization
+    graphyte.init(graphyte_host, prefix=graphyte_prefix, log_sends=True, interval=interval_time) # Graphite settings initialization
 except Exception as err:
     print_errmsg ("graphyte.init #01",err)
 
-
-print_infomsg ("Collecting mongo TOP usage statistics")
-dbstop = g_mclient.admin.command("top") # Top command returns usage statistics for each collection
-dump = json.dumps(dbstop, indent=4)
-print_infomsg (u"TOP command output:"+dump)
-
-
-with open('mongo_top.json', 'w') as outfile: # Writing Top command output to the json file
-    json.dump(dbstop, outfile)
-outfile.close()
 
 print_infomsg ("Collecting mongo metrics DB - START")
 
@@ -175,26 +165,81 @@ for gs_db in gas_dbs:
             print_infomsg ("Collecting mongo collections totalIndexSize - END")
 
 
-with open('mongo_top.json', 'r') as data_file:    
-    admin_dbstop = json.load(data_file)
-            
-for col_time in admin_dbstop["totals"]:
-    print_infomsg ("Collecting mongo lock times - START") 
-    if "readLock" in admin_dbstop["totals"][col_time]:
-        read_total = admin_dbstop["totals"][col_time]["readLock"]["time"]
-        read = read_total/1000000
-        graphyte.send("collections."+col_time+"."+'readLock', read) #sending to graphyte collections readLock time
-    if "writeLock" in admin_dbstop["totals"][col_time]:
-        write_total = admin_dbstop["totals"][col_time]["writeLock"]["time"]
-        write = write_total/1000000
-        graphyte.send("collections."+col_time+"."+'writeLock', write) #sending to graphyte collections writeLock time
-    print_infomsg ("Collecting mongo lock times  - END")
+
+print_infomsg (u"Collecting mongo TOP usage statistics")
+g_top = g_mclient.admin.command("top") # Top command returns usage statistics for each collection
+dump = json.dumps(g_top, indent=4)
+
+
+#topjson_filepath="/var/log/mongostatus/mongo_top.json" #combat path to mongo_top.json file
+topjson_filepath="C:/Users/osharudin.SEO/Desktop/MongoStatus/mongo_top.json" #test path to mongo_top.json file
+
+try:
+    print_infomsg (u"reading Top command output from the JSON file")
+    with open(topjson_filepath, 'r') as data_file:
+        json_dbstop = json.load(data_file)
+except Exception as err:
+    print_infomsg("No json file with top command output")
+    with open(topjson_filepath, 'w') as outfile:
+        json.dump(g_top, outfile)
+    sys.exit()    
+
+
+json_read_time = 0
+json_write_time = 0
+top_read_time = 0
+top_write_time = 0
+
+
+print_infomsg (u"Writing Top command output to the JSON file:"+dump)
+with open(topjson_filepath, 'w') as outfile:
+    json.dump(g_top, outfile)
+
+
+for json_item in json_dbstop["totals"]: #reading JSON file with readLock, writeLock time
+    if "readLock" in json_dbstop["totals"][json_item]:
+        json_read_time = json_dbstop["totals"][json_item]["readLock"]["time"]
+
+    if "writeLock" in json_dbstop["totals"][json_item]:
+        json_write_time = json_dbstop["totals"][json_item]["writeLock"]["time"]
+
+    if "readLock" in g_top["totals"][json_item]:
+        top_read_time = g_top["totals"][json_item]["readLock"]["time"]
+ 
+    if "writeLock" in g_top["totals"][json_item]:
+        top_write_time = g_top["totals"][json_item]["writeLock"]["time"]
+
+    
+    print ("json_write_time - "+ str(json_write_time))
+    print ("json_read_time - "+ str(json_read_time))
+    print ("top_write_time - "+ str(top_write_time))
+    print ("top_read_time - "+ str(top_read_time))
+
+    print_infomsg (u"Comparing Top command output and JSON file data")
+    read = (json_read_time + top_read_time)
+    read_time = math.ceil(read/1000000)
         
+    write = (json_write_time + top_write_time)
+    write_time = math.ceil(write/1000000)
+
+    print ("read_sum - "+ str(read_time))
+    print ("write_sum - "+ str(write_time))
+
+    print_infomsg ("Sending to graphyte collections writeLock time - START")
+    graphyte.send("collections."+json_item+"."+'writeLock', write_time) #sending to graphyte collections writeLock time
+    print_infomsg ("Sending to graphyte collections writeLock time - END")
+    
+    print_infomsg ("Sending to graphyte collections readLock time - START")
+    graphyte.send("collections."+json_item+"."+'readLock', read_time) #sending to graphyte collections readLock time
+    print_infomsg ("Sending to graphyte collections readLock time - END")
+    
+    print ("collections."+json_item+"."+'writeLock', write_time)
+    print ("collections."+json_item+"."+'readLock', read_time)
+    
 print_infomsg ("Collecting mongo metrics DB - END")
 print_infomsg ("Send data to graphyte - END")
 
 g_mclient.close()
-data_file.close() #closing the JSON file
 
 print_infomsg ("DB disconnected!")
 
